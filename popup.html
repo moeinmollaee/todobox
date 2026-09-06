@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>TodoBox</title>
+  <link rel="stylesheet" href="css/app.css" />
+  <script src="js/theme-boot.js"></script>
+  <style>
+    body.popup { width: 360px; min-height: 260px; }
+    .popup-wrap { padding: 14px 14px 16px; }
+    .popup-wrap h1 { margin: 0 0 8px; font-size: 18px; letter-spacing: -0.03em; }
+  </style>
+</head>
+<body class="popup">
+  <div class="popup-wrap">
+    <h1>Today</h1>
+    <form id="popup-add" class="quick-row">
+      <input id="popup-q" type="text" placeholder="Add a task" dir="auto" />
+    </form>
+    <ul class="task-list" id="popup-list"></ul>
+    <p class="hint" id="popup-empty" hidden>Nothing due today.</p>
+    <div class="btn-row">
+      <button class="primary" id="open-full" type="button">Open TodoBox</button>
+    </div>
+  </div>
+  <script src="vendor/sql-wasm.js"></script>
+  <script type="module" src="js/popup.js"></script>
+</body>
+</html>

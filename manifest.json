@@ -1,0 +1,45 @@
+{
+  "manifest_version": 3,
+  "name": "TodoBox",
+  "short_name": "TodoBox",
+  "version": "1.0.0",
+  "description": "A calm new-tab homepage with Google search, shortcuts, and a full local task manager. Data lives in a SQLite file you choose.",
+  "author": "Moein Mollaee",
+  "homepage_url": "https://moeinmollaee.com",
+  "minimum_chrome_version": "116",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "TodoBox",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "chrome_url_overrides": {
+    "newtab": "newtab.html"
+  },
+  "permissions": [
+    "storage",
+    "unlimitedStorage",
+    "topSites",
+    "alarms",
+    "notifications",
+    "favicon",
+    "offscreen"
+  ],
+  "offline_enabled": true,
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
+  }
+}

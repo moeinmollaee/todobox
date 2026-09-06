@@ -1,0 +1,16 @@
+node_modules/
+.DS_Store
+Thumbs.db
+*.log
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+.env
+.env.*
+
+# Local PWA startup choice (written on first run)
+app install/pwa-settings.ini
+
+# Packaged Electron leftovers — not part of the source
+app install/dist/
+*.asar
