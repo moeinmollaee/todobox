@@ -1,6 +1,6 @@
 # TodoBox
 
-[![Version](https://img.shields.io/badge/version-1.0.0-0f6e62?style=flat-square)](https://github.com/moeinmollaee/todobox)
+[![Release](https://img.shields.io/github/v/release/moeinmollaee/todobox?style=flat-square)](https://github.com/moeinmollaee/todobox/releases/latest)
 [![License: MIT](https://img.shields.io/github/license/moeinmollaee/todobox?style=flat-square)](LICENSE)
 [![Chrome](https://img.shields.io/badge/Chrome-MV3-4285F4?style=flat-square&logo=googlechrome&logoColor=white)](manifest.json)
 [![Platform](https://img.shields.io/badge/platform-extension%20%2B%20PWA-6f6d66?style=flat-square)](#install-chrome-extension)
