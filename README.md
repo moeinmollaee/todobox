@@ -12,6 +12,20 @@ Author: [Moein Mollaee](https://moeinmollaee.com)
 
 Version **1.0.0**. Tasks, notes, projects, and shortcuts live in a SQLite file you choose (`todobox.sqlite`). There is no account, no server of yours, and no cloud API inside the app.
 
+## Demo
+
+New tab home — search, today’s tasks, notes, most visited, and shortcuts:
+
+![TodoBox home](docs/screenshots/01-home.png)
+
+Task workspace — Inbox, projects, tags, and notes side by side:
+
+![TodoBox tasks](docs/screenshots/02-tasks.png)
+
+Task detail — title, notes, due date, priority, tags, reminders, and subtasks:
+
+![TodoBox task detail](docs/screenshots/03-task-detail.png)
+
 ## What you get
 
 - New-tab home: greeting, Google search, Today list, shortcuts, notes
