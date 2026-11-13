@@ -10,7 +10,7 @@ A calm Chrome new-tab homepage with Google search, shortcuts, most-visited sites
 
 Author: [Moein Mollaee](https://moeinmollaee.com)
 
-Version **1.1.0**. Tasks, notes, projects, and shortcuts live in a SQLite file you choose (`todobox.sqlite`). Mail over **IMAP + SMTP** works through a **local mail bridge** on your PC — passwords stay in `%LOCALAPPDATA%\TodoBox`, not in the cloud sync file.
+Version **1.1.1**. Tasks, notes, projects, and shortcuts live in a SQLite file you choose (`todobox.sqlite`). Mail over **IMAP + SMTP** works through a **local mail bridge** on your PC — passwords stay in `%LOCALAPPDATA%\TodoBox`, not in the cloud sync file.
 
 ## Demo
 

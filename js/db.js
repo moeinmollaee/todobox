@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   completed_at INTEGER,
   archived INTEGER DEFAULT 0,
   deleted_at INTEGER,
+  starred INTEGER DEFAULT 0,
   sort_order INTEGER DEFAULT 0,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
@@ -177,6 +178,7 @@ function ensureSchema(target = db, { migrate = true } = {}) {
   target.exec(SCHEMA);
   ensureColumn("projects", "deleted_at", "INTEGER", target);
   ensureColumn("tasks", "deleted_at", "INTEGER", target);
+  ensureColumn("tasks", "starred", "INTEGER DEFAULT 0", target);
   ensureColumn("projects", "updated_at", "INTEGER", target);
   ensureColumn("sections", "updated_at", "INTEGER", target);
   ensureColumn("tags", "updated_at", "INTEGER", target);
@@ -995,6 +997,21 @@ function todayMatchSql() {
   return { sql, end: end.getTime() };
 }
 
+/** Find a live task created from a mail message (marker in notes). */
+export function findTaskByMailMessageId(messageId) {
+  const id = String(messageId || "").trim();
+  if (!id) return null;
+  // Escape LIKE wildcards in Message-ID.
+  const escaped = id.replace(/([\\%_])/g, "\\$1");
+  const needle = `%todobox-mail-id:${escaped}%`;
+  return one(
+    `SELECT id, title, notes FROM tasks
+     WHERE deleted_at IS NULL AND archived = 0 AND notes LIKE ? ESCAPE '\\'
+     LIMIT 1`,
+    [needle]
+  );
+}
+
 export function addTask(fields) {
   const now = Date.now();
   const id = fields.id || uid();
@@ -1061,7 +1078,7 @@ export function updateTask(id, patch) {
   }
   const allowed = [
     "title", "notes", "url", "priority", "due_at", "due_has_time",
-    "recurrence", "project_id", "section_id", "parent_id", "sort_order",
+    "recurrence", "project_id", "section_id", "parent_id", "sort_order", "starred",
   ];
   const sets = [];
   const params = [];
@@ -1219,6 +1236,45 @@ export function listArchivedTasks() {
     ORDER BY updated_at DESC
     LIMIT 300
   `));
+}
+
+/** Open starred tasks for Home pin (not completed / archive / trash). */
+export function listStarredTasks() {
+  return hydrate(all(`
+    SELECT * FROM tasks
+    WHERE ${ACTIVE_TASK} AND completed_at IS NULL AND parent_id IS NULL AND starred = 1
+      AND ${LIVE_PROJECT}
+    ORDER BY
+      CASE WHEN due_at IS NULL THEN 1 ELSE 0 END,
+      due_at,
+      priority,
+      sort_order,
+      created_at
+    LIMIT 100
+  `));
+}
+
+/** Bucket label for a task on Home (Today / Upcoming / Inbox / …). */
+export function taskContextLabel(task) {
+  if (!task) return "Inbox";
+  if (task.project_id) {
+    const p = one("SELECT name FROM projects WHERE id = ?", [task.project_id]);
+    return p?.name || "Project";
+  }
+  if (!task.due_at) return "Inbox";
+  const startToday = new Date();
+  startToday.setHours(0, 0, 0, 0);
+  const endToday = new Date();
+  endToday.setHours(23, 59, 59, 999);
+  if (task.due_has_time ? task.due_at < Date.now() : task.due_at < startToday.getTime()) {
+    return "Overdue";
+  }
+  if (task.due_at <= endToday.getTime()) return "Today";
+  const endUpcoming = new Date(startToday);
+  endUpcoming.setDate(endUpcoming.getDate() + 14);
+  endUpcoming.setHours(23, 59, 59, 999);
+  if (task.due_at <= endUpcoming.getTime()) return "Upcoming";
+  return "Inbox";
 }
 
 export function listTrashedTasks() {

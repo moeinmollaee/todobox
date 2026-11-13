@@ -155,25 +155,158 @@ function walkParts(node, prefix = "", out = []) {
   return out;
 }
 
-async function buildMessageFromFetch(meta, raw, folder) {
-  const parsed = await simpleParser(raw);
-  const parts = walkParts(meta.bodyStructure);
-  const attachments = parts
-    .filter((p) => {
-      const filename = p.dispositionParameters?.filename || p.parameters?.name;
-      return (p.disposition || "").toLowerCase() === "attachment" || !!filename;
-    })
-    .map((p) => ({
+function bufferToUtf8(content) {
+  if (content == null) return "";
+  if (typeof content === "string") return content;
+  if (Buffer.isBuffer(content)) return content.toString("utf8");
+  try {
+    return Buffer.from(content).toString("utf8");
+  } catch {
+    return String(content);
+  }
+}
+
+/** Prefer text/calendar / .ics body for meeting → task conversion. */
+function extractCalendarText(parsed) {
+  for (const a of parsed.attachments || []) {
+    const type = String(a.contentType || "").toLowerCase();
+    const name = String(a.filename || "").toLowerCase();
+    if (type.includes("text/calendar") || name.endsWith(".ics")) {
+      const text = bufferToUtf8(a.content);
+      if (text.includes("BEGIN:VCALENDAR")) return text;
+    }
+  }
+  const text = parsed.text || "";
+  if (text.includes("BEGIN:VCALENDAR")) return text;
+  return "";
+}
+
+/** Replace cid:… image refs with data URLs so the reader can show inline images. */
+function embedCidImages(html, parsedAttachments = []) {
+  let out = String(html || "");
+  if (!out) return out;
+  for (const a of parsedAttachments) {
+    if (!a?.cid || a.content == null) continue;
+    const cid = String(a.cid).replace(/^<|>$/g, "").trim();
+    if (!cid) continue;
+    const buf = Buffer.isBuffer(a.content) ? a.content : Buffer.from(a.content);
+    if (!buf.length) continue;
+    const ct = String(a.contentType || "application/octet-stream").split(";")[0].trim() || "application/octet-stream";
+    const dataUrl = `data:${ct};base64,${buf.toString("base64")}`;
+    const variants = [`cid:${cid}`, `CID:${cid}`, `cid:${a.cid}`, `cid:<${cid}>`];
+    for (const v of variants) {
+      if (out.includes(v)) out = out.split(v).join(dataUrl);
+    }
+  }
+  return out;
+}
+
+function partFilename(p) {
+  return p?.dispositionParameters?.filename || p?.parameters?.name || "";
+}
+
+function partCid(p) {
+  return p?.id ? String(p.id).replace(/^<|>$/g, "").trim() : "";
+}
+
+function isInlineImagePart(p) {
+  const type = `${(p.type || "").toLowerCase()}/${(p.subtype || "").toLowerCase()}`;
+  if (!type.startsWith("image/")) return false;
+  const disposition = (p.disposition || "").toLowerCase();
+  return disposition === "inline" || disposition === "related" || !!partCid(p);
+}
+
+function isInlineImageAttachment(a) {
+  const type = String(a.contentType || "").toLowerCase();
+  const disp = String(a.contentDisposition || "").toLowerCase();
+  if (!type.startsWith("image/")) return false;
+  if (disp === "attachment") return false;
+  return !!a.cid;
+}
+
+/**
+ * Prefer mailparser's attachment list (matches what webmail/cPanel show),
+ * then map each file to an IMAP bodyStructure part id for download.
+ * Parser-only fallback uses part "parser-N" (index into downloadable mailparser attachments).
+ */
+function buildAttachmentsList(bodyStructure, parsed) {
+  const parts = walkParts(bodyStructure);
+  const result = [];
+  const usedParts = new Set();
+
+  const push = (item) => {
+    if (!item?.part) return;
+    if (result.some((r) => r.part === item.part && r.filename === item.filename)) return;
+    result.push(item);
+    usedParts.add(item.part);
+  };
+
+  const downloadable = (parsed.attachments || []).filter((a) => !isInlineImageAttachment(a));
+  downloadable.forEach((a, parserIndex) => {
+    const filename = a.filename || `attachment-${parserIndex + 1}`;
+    const type = String(a.contentType || "application/octet-stream").split(";")[0].trim();
+    const cid = a.cid ? String(a.cid).replace(/^<|>$/g, "").trim() : "";
+
+    let match = parts.find((p) => {
+      if (usedParts.has(p.part)) return false;
+      const fn = partFilename(p);
+      if (fn && fn.toLowerCase() === filename.toLowerCase()) return true;
+      if (cid && partCid(p) === cid) return true;
+      return false;
+    });
+
+    if (!match) {
+      match = parts.find((p) => {
+        if (usedParts.has(p.part)) return false;
+        if (isInlineImagePart(p)) return false;
+        return (p.disposition || "").toLowerCase() === "attachment";
+      });
+    }
+
+    if (!match) {
+      match = parts.find((p) => {
+        if (usedParts.has(p.part)) return false;
+        if (isInlineImagePart(p)) return false;
+        return !!partFilename(p);
+      });
+    }
+
+    push({
+      part: match?.part || `parser-${parserIndex}`,
+      filename,
+      type: type || "application/octet-stream",
+      size: a.size || match?.size || 0,
+    });
+  });
+
+  for (const p of parts) {
+    if (usedParts.has(p.part)) continue;
+    if (isInlineImagePart(p)) continue;
+    const disposition = (p.disposition || "").toLowerCase();
+    const filename = partFilename(p);
+    if (disposition !== "attachment" && !filename) continue;
+    push({
       part: p.part,
-      filename: p.dispositionParameters?.filename || p.parameters?.name || `attachment-${p.part}`,
+      filename: filename || `attachment-${p.part}`,
       type: `${p.type}/${p.subtype || "octet-stream"}`,
       size: p.size || 0,
-    }));
+    });
+  }
+
+  return result;
+}
+
+async function buildMessageFromFetch(meta, raw, folder) {
+  const parsed = await simpleParser(raw);
+  const attachments = buildAttachmentsList(meta.bodyStructure, parsed);
 
   const refs = parsed.references;
   const references = Array.isArray(refs)
     ? refs.filter(Boolean).join(" ")
     : String(refs || "").trim();
+
+  const htmlRaw = typeof parsed.html === "string" ? parsed.html : "";
+  const html = embedCidImages(htmlRaw, parsed.attachments || []);
 
   return {
     uid: meta.uid,
@@ -189,10 +322,27 @@ async function buildMessageFromFetch(meta, raw, folder) {
     cc: addrList(parsed.cc),
     replyTo: addrList(parsed.replyTo),
     text: parsed.text || "",
-    html: typeof parsed.html === "string" ? parsed.html : "",
+    html,
+    calendar: extractCalendarText(parsed),
     attachments,
     size: meta.size || raw.length || 0,
   };
+}
+
+/** Append a raw RFC822 message to the account's Sent folder (\\Sent or name match). */
+export async function appendSentMessage(account, raw) {
+  const buf = Buffer.isBuffer(raw) ? raw : Buffer.from(raw || "");
+  if (!buf.length) return { ok: false, reason: "empty" };
+
+  return withImap(account, async (client) => {
+    const boxes = await client.list();
+    const sent = boxes.find((b) => b.specialUse === "\\Sent")
+      || boxes.find((b) => /(^|[/.\s])(sent|sent items|sent messages)([/.\s]|$)/i.test(b.path))
+      || boxes.find((b) => /^sent\b/i.test(b.name || ""));
+    if (!sent?.path) return { ok: false, reason: "no-sent-folder" };
+    await client.append(sent.path, buf, ["\\Seen"]);
+    return { ok: true, folder: sent.path };
+  });
 }
 
 export async function getMessage(account, folder, uid, { markSeen = true } = {}) {
@@ -264,16 +414,46 @@ export async function prefetchMessages(account, folder, uids) {
 }
 
 export async function getAttachment(account, folder, uid, partId) {
+  const id = String(partId || "");
+  // Fallback when IMAP bodyStructure could not be matched to mailparser's file list.
+  const parserMatch = id.match(/^parser[-:](\d+)$/i);
+  if (parserMatch) {
+    const index = Number(parserMatch[1]);
+    if (!Number.isFinite(index) || index < 0) throw new Error("Attachment not found");
+    return withImap(account, async (client) => {
+      const lock = await client.getMailboxLock(folder);
+      try {
+        let raw = null;
+        for await (const msg of client.fetch(String(uid), { source: true, uid: true }, { uid: true })) {
+          raw = msg.source;
+        }
+        if (!raw) throw new Error("Message not found");
+        const parsed = await simpleParser(raw);
+        const downloadable = (parsed.attachments || []).filter((a) => !isInlineImageAttachment(a));
+        const a = downloadable[index];
+        if (!a?.content) throw new Error("Attachment not found");
+        const buffer = Buffer.isBuffer(a.content) ? a.content : Buffer.from(a.content);
+        return {
+          filename: a.filename || `attachment-${index + 1}`,
+          contentType: String(a.contentType || "application/octet-stream").split(";")[0],
+          buffer,
+        };
+      } finally {
+        lock.release();
+      }
+    });
+  }
+
   return withImap(account, async (client) => {
     const lock = await client.getMailboxLock(folder);
     try {
-      const downloaded = await client.download(String(uid), String(partId), { uid: true });
+      const downloaded = await client.download(String(uid), id, { uid: true });
       if (!downloaded) throw new Error("Attachment not found");
       const chunks = [];
       for await (const chunk of downloaded.content) chunks.push(chunk);
       const buffer = Buffer.concat(chunks);
       return {
-        filename: downloaded.meta?.filename || `attachment-${partId}`,
+        filename: downloaded.meta?.filename || `attachment-${id}`,
         contentType: downloaded.meta?.contentType || "application/octet-stream",
         buffer,
       };

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "TodoBox",
   "short_name": "TodoBox",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "A calm new-tab homepage with Google search, shortcuts, a full local task manager, and IMAP/SMTP mail via a local bridge.",
   "author": "Moein Mollaee",
   "homepage_url": "https://moeinmollaee.com",

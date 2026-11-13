@@ -318,11 +318,16 @@ async function handleMailApi(req, res, url) {
       const uid = parts[3];
       const part = parts[4];
       const file = await getAttachment(account, folder, uid, part);
+      const safeName = String(url.searchParams.get("name") || file.filename || "attachment")
+        .replace(/[/\\?%*:|"<>]/g, "_")
+        .trim() || "attachment";
+      const contentType = file.contentType || "application/octet-stream";
       res.writeHead(200, {
-        "Content-Type": file.contentType,
-        "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(file.filename)}`,
+        "Content-Type": contentType,
+        "Content-Disposition": `attachment; filename="${safeName.replace(/"/g, "")}"; filename*=UTF-8''${encodeURIComponent(safeName)}`,
         "Content-Length": file.buffer.length,
         "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
       });
       return res.end(file.buffer);
     }

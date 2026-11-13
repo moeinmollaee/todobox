@@ -72,6 +72,24 @@ function cycleTheme() {
   toast(`Theme: ${next}`);
 }
 
+/** Pick a Tasks nav view where this task actually appears in the list. */
+function viewForTaskVisibility(task) {
+  if (!task || task.deleted_at || task.archived) return "inbox";
+  if (task.completed_at) return "completed";
+  if (task.project_id) return "project";
+  if (!task.due_at) return "inbox";
+  const endToday = new Date();
+  endToday.setHours(23, 59, 59, 999);
+  if (task.due_at <= endToday.getTime()) return "today";
+  const endUpcoming = new Date();
+  endUpcoming.setHours(0, 0, 0, 0);
+  endUpcoming.setDate(endUpcoming.getDate() + 14);
+  endUpcoming.setHours(23, 59, 59, 999);
+  if (task.due_at <= endUpcoming.getTime()) return "upcoming";
+  // Dated further out — still listed under Inbox (no project).
+  return "inbox";
+}
+
 function setPage(page) {
   ui.page = page;
   $("home").classList.toggle("hidden", page !== "home");
@@ -109,22 +127,35 @@ function dueHtml(task) {
   return `<span class="${overdue ? "overdue" : ""}">${esc(label)}</span>`;
 }
 
-function taskRow(task, extra = "") {
+function starBtn(task) {
+  const on = !!Number(task.starred);
+  return `<button class="task-star-btn ${on ? "on" : ""}" data-act="star" type="button" title="${on ? "Unstar" : "Star — pin on Home"}" aria-label="${on ? "Unstar" : "Star"}" aria-pressed="${on ? "true" : "false"}">
+    <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="${on
+      ? "M12 2.5l2.9 6.1 6.7.8-4.9 4.5 1.3 6.6L12 17.3 5.9 20.5l1.3-6.6L2.4 9.4l6.7-.8L12 2.5Z"
+      : "M12 4.2l2.1 4.4 4.9.6-3.6 3.3.9 4.8L12 15.2 7.7 17.3l.9-4.8L5 9.2l4.9-.6L12 4.2m0-1.7L8.5 9.2 2 10.1l4.8 4.4-1.3 6.5L12 17.8l6.5 3.2-1.3-6.5L22 10.1 15.5 9.2 12 2.5Z"}"/></svg>
+  </button>`;
+}
+
+function taskRow(task, extra = "", { contextLabel = "" } = {}) {
   const tags = (task.tags || []).map((t) => `<span class="chip">@${esc(t.name)}</span>`).join("");
   const rec = task.recurrence ? `<span class="chip">${esc(recurrenceLabel(task.recurrence))}</span>` : "";
   const proj = task.project_id ? db.getProject(task.project_id) : null;
   const projChip = proj ? `<span class="chip chip-project">${esc(proj.name)}</span>` : "";
+  const ctxChip = contextLabel
+    ? `<span class="chip chip-context">${esc(contextLabel)}</span>`
+    : "";
   const linkBtn = task.url
     ? `<button class="task-link-btn" data-act="open-link" data-url="${esc(task.url)}" type="button" title="Open link in new tab" aria-label="Open link in new tab">
          <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M10.59 13.41a1 1 0 0 0 1.41 1.41l6-6V11a1 1 0 1 0 2 0V5a1 1 0 0 0-1-1h-6a1 1 0 1 0 0 2h2.17l-6.58 6.59ZM5 6a3 3 0 0 1 3-3h3a1 1 0 1 1 0 2H8a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-3a1 1 0 1 1 2 0v3a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3V6Z"/></svg>
        </button>`
     : "";
-  return `<li class="task-row ${extra}${ui.selectedId === task.id ? " selected" : ""}" data-id="${task.id}" draggable="true">
+  return `<li class="task-row ${extra}${ui.selectedId === task.id ? " selected" : ""}${Number(task.starred) ? " starred" : ""}" data-id="${task.id}" draggable="true">
     <button class="check p${task.priority}" data-act="complete" title="Complete" type="button"></button>
     <div>
       <span class="task-title" dir="auto">${esc(task.title)}</span>
-      <div class="task-meta">${dueHtml(task)}${projChip}${tags}${rec}${linkBtn}</div>
+      <div class="task-meta">${ctxChip}${dueHtml(task)}${projChip}${tags}${rec}${linkBtn}</div>
     </div>
+    ${starBtn(task)}
   </li>`;
 }
 
@@ -323,10 +354,18 @@ function renderHome() {
     wireFavicons($("topsite-grid"));
   }
 
-  const today = db.queryTasks("today");
-  $("home-today-list").innerHTML = today.length
-    ? today.map((t) => taskRow(t)).join("")
-    : `<p class="empty">Nothing due today. Type a task below — it will be set for today.</p>`;
+  const starred = db.listStarredTasks();
+  const starredIds = new Set(starred.map((t) => t.id));
+  const today = db.queryTasks("today").filter((t) => !starredIds.has(t.id));
+  const starredHtml = starred.map((t) => (
+    taskRow(t, "starred-pin", { contextLabel: db.taskContextLabel(t) })
+  )).join("");
+  const todayHtml = today.map((t) => taskRow(t)).join("");
+  if (starredHtml || todayHtml) {
+    $("home-today-list").innerHTML = `${starredHtml}${todayHtml}`;
+  } else {
+    $("home-today-list").innerHTML = `<li class="empty-row"><p class="empty">Nothing due today. Type a task below — it will be set for today.</p></li>`;
+  }
   renderNotes();
 }
 
@@ -635,6 +674,10 @@ function renderDetail() {
   const sections = task.project_id ? db.listSections(task.project_id) : [];
   const rem = task.reminders?.[0];
   pane.innerHTML = `
+    <div class="detail-star-row">
+      ${starBtn(task)}
+      <span class="hint">${Number(task.starred) ? "Starred — pinned on Home" : "Star to pin on Home"}</span>
+    </div>
     <div class="field"><label>Title</label><input id="d-title" dir="auto" value="${esc(task.title)}" /></div>
     <div class="field"><label>Notes</label><textarea id="d-notes" dir="auto">${esc(task.notes || "")}</textarea></div>
     <div class="field"><label>Link</label><input id="d-url" value="${esc(task.url || "")}" placeholder="https://" /></div>
@@ -1262,6 +1305,18 @@ function bind() {
       completeFromUi(complete.closest("[data-id]").dataset.id);
       return;
     }
+    const star = e.target.closest("[data-act=star]");
+    if (star) {
+      e.preventDefault();
+      e.stopPropagation();
+      const id = star.closest("[data-id]")?.dataset.id || ui.selectedId;
+      if (!id) return;
+      const task = db.getTask(id);
+      if (!task) return;
+      db.updateTask(id, { starred: Number(task.starred) ? 0 : 1 });
+      render();
+      return;
+    }
     const openLink = e.target.closest("[data-act=open-link]");
     if (openLink) {
       e.preventDefault();
@@ -1384,6 +1439,24 @@ async function boot() {
     toast,
     openModal,
     closeModal,
+    findTaskByMailId: (messageId) => db.findTaskByMailMessageId(messageId),
+    addTask: (fields) => {
+      const id = db.addTask(fields);
+      pushUndo("Task added", () => db.deleteTask(id));
+      return id;
+    },
+    openTasks: (taskId) => {
+      if (taskId) {
+        const task = db.getTask(taskId);
+        ui.selectedId = taskId;
+        // Mail meetings often have a future due date — Today would hide them.
+        ui.view = viewForTaskVisibility(task);
+        ui.projectId = task?.project_id || null;
+        ui.tagId = null;
+      }
+      setPage("tasks");
+      render();
+    },
   });
   bind();
   const params = new URLSearchParams(location.search);

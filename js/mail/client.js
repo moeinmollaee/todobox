@@ -134,8 +134,9 @@ export async function deleteMessages(accountId, folder, uids) {
   });
 }
 
-export function attachmentUrl(accountId, folder, uid, part) {
+export function attachmentUrl(accountId, folder, uid, part, filename = "") {
   const q = new URLSearchParams({ folder });
+  if (filename) q.set("name", filename);
   return `${baseUrl()}/api/mail/accounts/${encodeURIComponent(accountId)}/attachments/${encodeURIComponent(uid)}/${encodeURIComponent(part)}?${q}`;
 }
 

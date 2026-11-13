@@ -1,5 +1,11 @@
 import * as mail from "./client.js";
 import { mountIsolatedHtml } from "./sanitize.js";
+import { buildTaskDraftFromMessage, mailTaskMarker } from "./to-task.js";
+import {
+  mountComposeEditor,
+  plainToHtml,
+  extractInlineImages,
+} from "./compose-editor.js";
 import { esc } from "../util.js";
 
 /** Soft client TTL: re-entering Mail within this window reuses in-memory data. */
@@ -48,6 +54,9 @@ let hooks = {
   toast: () => {},
   openModal: () => {},
   closeModal: () => {},
+  addTask: null,
+  findTaskByMailId: null,
+  openTasks: null,
 };
 
 function isMailPageVisible() {
@@ -809,12 +818,28 @@ function renderReader() {
   const msgAccountId = m.accountId || state.accountId;
   const msgFolder = m.folder || state.folder || "INBOX";
   const msgAcc = state.accounts.find((a) => a.id === msgAccountId);
+  const existingMailTask = m.messageId && hooks.findTaskByMailId
+    ? hooks.findTaskByMailId(m.messageId)
+    : null;
   const night = state.readerTheme === "dark";
-  const atts = (m.attachments || []).map((a) => `
-    <a class="mail-attach" href="${esc(mail.attachmentUrl(msgAccountId, msgFolder, m.uid, a.part))}" download="${esc(a.filename)}" target="_blank" rel="noopener">
-      ${esc(a.filename)} (${Math.round((a.size || 0) / 1024)} KB)
-    </a>
-  `).join("");
+  const atts = (m.attachments || []).map((a) => {
+    const url = mail.attachmentUrl(msgAccountId, msgFolder, m.uid, a.part, a.filename);
+    const image = isImageAttachment(a);
+    const ext = fileExtLabel(a.filename, a.type);
+    return `
+      <button type="button" class="mail-attach-card" data-url="${esc(url)}" data-name="${esc(a.filename || "attachment")}" title="Download ${esc(a.filename || "attachment")}">
+        <span class="mail-attach-thumb ${image ? "is-image" : "is-file"}">
+          ${image
+            ? `<img src="${esc(url)}" alt="" loading="lazy" />`
+            : `<span class="mail-attach-ext">${esc(ext)}</span>`}
+        </span>
+        <span class="mail-attach-meta">
+          <span class="mail-attach-name" dir="auto">${esc(a.filename || "attachment")}</span>
+          <span class="mail-attach-size">${esc(formatBytes(a.size))}</span>
+        </span>
+      </button>
+    `;
+  }).join("");
 
   pane.dataset.readerTheme = state.readerTheme;
   pane.innerHTML = `
@@ -841,17 +866,21 @@ function renderReader() {
         <button class="primary" type="button" id="mail-reply">Reply</button>
         <button class="ghost-btn" type="button" id="mail-reply-all">Reply all</button>
         <button class="ghost-btn" type="button" id="mail-forward">Forward</button>
+        <button class="ghost-btn" type="button" id="mail-add-task" title="${existingMailTask ? "Open the linked task (already saved)" : "Save as a task immediately — no extra Save needed"}">${existingMailTask ? "Open task" : "Add as task"}</button>
         <button class="ghost-btn" type="button" id="mail-toggle-read">${m.flags?.includes("\\Seen") ? "Mark unread" : "Mark read"}</button>
         <button class="ghost-btn" type="button" id="mail-move">Move</button>
         <button class="danger-btn" type="button" id="mail-delete">Delete</button>
       </div>
-      ${atts ? `<div class="mail-attach-list">${atts}</div>` : ""}
+      ${atts ? `<div class="mail-attach-box"><div class="mail-attach-box-label">Attachments</div><div class="mail-attach-list">${atts}</div></div>` : ""}
     </div>
     <div class="mail-read-body" id="mail-read-body"></div>
   `;
 
   $("mail-reader-theme").onclick = () => cycleReaderTheme();
   $("mail-reader-plain")?.addEventListener("click", () => cycleReaderView());
+  pane.querySelectorAll(".mail-attach-card").forEach((btn) => {
+    btn.addEventListener("click", () => downloadMailAttachment(btn));
+  });
 
   const bodyEl = $("mail-read-body");
   const preferPlain = state.readerView === "plain" || !m.html;
@@ -869,7 +898,7 @@ function renderReader() {
     accountId: msgAccountId,
     to: addrText(m.replyTo?.length ? m.replyTo : m.from),
     subject: /^re:/i.test(m.subject || "") ? m.subject : `Re: ${m.subject || ""}`,
-    text: replyDraftBody(m),
+    text: "",
     inReplyTo: m.messageId || "",
     references: buildReferences(m),
   });
@@ -883,7 +912,7 @@ function renderReader() {
       to: addrText(m.replyTo?.length ? m.replyTo : m.from),
       cc: people.map((a) => a.address).filter(Boolean).join(", "),
       subject: /^re:/i.test(m.subject || "") ? m.subject : `Re: ${m.subject || ""}`,
-      text: replyDraftBody(m),
+      text: "",
       inReplyTo: m.messageId || "",
       references: buildReferences(m),
     });
@@ -894,6 +923,7 @@ function renderReader() {
     subject: /^fwd:/i.test(m.subject || "") ? m.subject : `Fwd: ${m.subject || ""}`,
     text: forwardDraftBody(m),
   });
+  $("mail-add-task").onclick = () => addMessageAsTask(m, existingMailTask);
   $("mail-toggle-read").onclick = async () => {
     const seen = m.flags?.includes("\\Seen");
     try {
@@ -932,6 +962,55 @@ function renderReader() {
   };
 }
 
+function formatBytes(n) {
+  const size = Number(n) || 0;
+  if (size <= 0) return "";
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function isImageAttachment(a) {
+  const type = String(a?.type || "").toLowerCase();
+  if (type.startsWith("image/")) return true;
+  return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(a?.filename || "");
+}
+
+function fileExtLabel(filename, type) {
+  const fromName = String(filename || "").split(".").pop();
+  if (fromName && fromName !== filename && fromName.length <= 5) return fromName.toUpperCase();
+  const sub = String(type || "").split("/")[1] || "FILE";
+  return sub.slice(0, 5).toUpperCase();
+}
+
+async function downloadMailAttachment(btn) {
+  const url = btn?.dataset?.url;
+  const name = btn?.dataset?.name || "attachment";
+  if (!url) return;
+  btn.disabled = true;
+  try {
+    const resp = await fetch(url);
+    const type = (resp.headers.get("content-type") || "").toLowerCase();
+    if (!resp.ok || type.includes("application/json")) {
+      const data = await resp.json().catch(() => ({}));
+      throw new Error(data.error || `Download failed (${resp.status})`);
+    }
+    const blob = await resp.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = objectUrl;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(objectUrl);
+  } catch (err) {
+    hooks.toast(err.message || String(err));
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 function stripHtmlToText(html) {
   return String(html || "")
     .replace(/<br\s*\/?>/gi, "\n")
@@ -953,26 +1032,59 @@ function plainBody(m) {
   return stripHtmlToText(m.html);
 }
 
-function quoteBody(m) {
-  const text = plainBody(m);
-  if (!text) return "";
-  return text.split(/\r?\n/).map((line) => `> ${line}`).join("\n");
+function addMessageAsTask(m, existing = null) {
+  if (!hooks.addTask) {
+    hooks.toast("Tasks are not available in this view");
+    return;
+  }
+  // Already linked — open it; do not create a duplicate.
+  if (existing?.id) {
+    hooks.toast("Opening linked task");
+    if (hooks.openTasks) hooks.openTasks(existing.id);
+    return;
+  }
+  const draft = buildTaskDraftFromMessage(m);
+  if (draft.messageId && hooks.findTaskByMailId) {
+    const again = hooks.findTaskByMailId(draft.messageId);
+    if (again?.id) {
+      hooks.toast("Opening linked task");
+      renderReader();
+      if (hooks.openTasks) hooks.openTasks(again.id);
+      return;
+    }
+  }
+  // Fallback marker if Message-ID is missing (rare).
+  if (!draft.marker) {
+    const accId = m.accountId || state.accountId || "";
+    draft.notes = `${draft.notes}\n${mailTaskMarker(`${accId}:${m.uid}`)}`.trim();
+  }
+  try {
+    const id = hooks.addTask({
+      title: draft.title,
+      notes: draft.notes,
+      url: draft.url,
+      due_at: draft.due_at,
+      due_has_time: draft.due_has_time,
+      remind_at: draft.remind_at,
+    });
+    // Stay on Mail — task is already persisted (no separate Save step).
+    // Meetings with a future due date live under Upcoming, not Today.
+    const where = draft.due_at
+      ? (draft.due_at > Date.now() ? "Upcoming" : "Today")
+      : "Inbox";
+    hooks.toast(draft.isEvent
+      ? `Meeting saved — look under ${where} (or Open task)`
+      : `Task saved — look under ${where} (or Open task)`);
+    void id;
+    renderReader();
+  } catch (err) {
+    hooks.toast(err.message || String(err));
+  }
 }
 
 function buildReferences(m) {
   const parts = `${m.references || ""} ${m.messageId || ""}`.trim().split(/\s+/).filter(Boolean);
   return [...new Set(parts)].join(" ");
-}
-
-/** New reply text first; quoted original below — caret starts at top. */
-function replyDraftBody(m) {
-  const when = m.date
-    ? new Date(m.date).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
-    : "";
-  const who = fromLabel(m.from);
-  const quoted = quoteBody(m);
-  const header = when ? `On ${when}, ${who} wrote:` : `${who} wrote:`;
-  return `\n\n${header}\n${quoted}`;
 }
 
 function forwardDraftBody(m) {
@@ -1115,6 +1227,8 @@ function openCompose(preset = {}) {
   const fromLine = fromName
     ? `${fromName} <${acc?.email || ""}>`
     : (acc?.email || "");
+  const initialHtml = preset.html
+    || (preset.text ? plainToHtml(preset.text) : "");
   hooks.openModal(`
     <h2>${preset.mode === "forward" ? "Forward" : isReply ? "Reply" : "Compose"}</h2>
     <p class="hint">From: <strong dir="auto">${esc(fromLine || "(set sender name in Settings)")}</strong>${
@@ -1123,8 +1237,10 @@ function openCompose(preset = {}) {
     <div class="field"><label>To</label><input id="c-to" value="${esc(preset.to || "")}" /></div>
     <div class="field"><label>Cc</label><input id="c-cc" value="${esc(preset.cc || "")}" /></div>
     <div class="field"><label>Subject</label><input id="c-subject" value="${esc(preset.subject || "")}" dir="auto" /></div>
-    <div class="field"><label>Message</label><textarea id="c-text" rows="12" dir="auto">${esc(preset.text || "")}</textarea></div>
-    ${isReply ? `<p class="hint">Type your reply at the top. Lines starting with &gt; are the original message.</p>` : ""}
+    <div class="field">
+      <label>Message</label>
+      <div id="c-editor"></div>
+    </div>
     <div class="field"><label>Attachments</label><input id="c-files" type="file" multiple /></div>
     <div class="btn-row">
       <button class="primary" type="button" id="c-send">Send</button>
@@ -1133,10 +1249,12 @@ function openCompose(preset = {}) {
   $("c-fix-from")?.addEventListener("click", () => {
     if (acc) openAccountModal(acc);
   });
-  const textEl = $("c-text");
+  const editor = mountComposeEditor($("c-editor"), {
+    initialHtml,
+    placeholder: isReply ? "Write your reply…" : "Write your message…",
+  });
   if (isReply || preset.mode === "forward") {
-    textEl.focus();
-    textEl.setSelectionRange(0, 0);
+    editor.focus();
   } else {
     $("c-to").focus();
   }
@@ -1145,42 +1263,65 @@ function openCompose(preset = {}) {
       if (!sendAccountId || sendAccountId === ALL_ACCOUNTS) {
         return hooks.toast("Pick a mailbox to send from");
       }
-      const files = [...($("c-files").files || [])];
-      const attachments = [];
-      for (const file of files) {
-        const buf = await file.arrayBuffer();
-        const bytes = new Uint8Array(buf);
-        let binary = "";
-        for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]);
-        attachments.push({
-          filename: file.name,
-          contentType: file.type || "application/octet-stream",
-          contentBase64: btoa(binary),
-        });
-      }
       if (!senderNameValue(acc)) {
         hooks.toast("Set a sender name in Mailbox settings before sending");
         openAccountModal(acc);
         return;
       }
-      const rawText = $("c-text").value;
-      // Drop a leading blank reply area if the user never wrote anything above the quote.
-      const text = isReply ? rawText.replace(/^\s*\n+/, (lead) => (lead.length ? "\n" : "")) : rawText;
-      await mail.sendMail(sendAccountId, {
+      const files = [...($("c-files").files || [])];
+      const attachments = [];
+      for (const file of files) {
+        const contentBase64 = await fileToBase64(file);
+        attachments.push({
+          filename: file.name,
+          contentType: file.type || "application/octet-stream",
+          contentBase64,
+        });
+      }
+      const rawHtml = editor.getHtml();
+      const text = editor.getText();
+      const { html, inlineAttachments } = extractInlineImages(rawHtml);
+      attachments.push(...inlineAttachments);
+      if (!text && !html && !attachments.length) {
+        return hooks.toast("Write a message or add an attachment");
+      }
+      const result = await mail.sendMail(sendAccountId, {
         to: $("c-to").value.trim(),
         cc: $("c-cc").value.trim() || undefined,
         subject: $("c-subject").value.trim(),
-        text,
+        text: text || (html ? undefined : ""),
+        html: html || undefined,
         inReplyTo: preset.inReplyTo || undefined,
         references: preset.references || undefined,
         attachments,
       });
+      editor.destroy();
       hooks.closeModal();
-      hooks.toast("Message sent");
+      hooks.toast(result?.savedToSent
+        ? "Message sent · saved to Sent"
+        : "Message sent · could not save to Sent folder");
+      // Refresh if user is looking at Sent so the copy appears.
+      if (result?.savedToSent && /sent/i.test(state.folder || "")) {
+        state.syncedAt = 0;
+        await bootMail({ force: true });
+      }
     } catch (err) {
       hooks.toast(err.message || String(err));
     }
   };
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || "");
+      const comma = dataUrl.indexOf(",");
+      resolve(comma >= 0 ? dataUrl.slice(comma + 1) : "");
+    };
+    reader.onerror = () => reject(reader.error || new Error("Failed to read file"));
+    reader.readAsDataURL(file);
+  });
 }
 
 async function openMoveModal(uid, accountId = null, folder = null) {
