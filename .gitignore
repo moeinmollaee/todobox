@@ -11,6 +11,9 @@ Thumbs.db
 # Local PWA startup choice (written on first run)
 app install/pwa-settings.ini
 
+# Mail credentials live under %LOCALAPPDATA%\TodoBox\ — never commit copies
+mail-accounts.json
+
 # Packaged Electron leftovers — not part of the source
 app install/dist/
 *.asar

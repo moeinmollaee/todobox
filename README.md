@@ -10,7 +10,7 @@ A calm Chrome new-tab homepage with Google search, shortcuts, most-visited sites
 
 Author: [Moein Mollaee](https://moeinmollaee.com)
 
-Version **1.0.0**. Tasks, notes, projects, and shortcuts live in a SQLite file you choose (`todobox.sqlite`). There is no account, no server of yours, and no cloud API inside the app.
+Version **1.1.0**. Tasks, notes, projects, and shortcuts live in a SQLite file you choose (`todobox.sqlite`). Mail over **IMAP + SMTP** works through a **local mail bridge** on your PC — passwords stay in `%LOCALAPPDATA%\TodoBox`, not in the cloud sync file.
 
 ## Demo
 
@@ -35,10 +35,21 @@ Task detail — title, notes, due date, priority, tags, reminders, and subtasks:
 - Subtasks, task links, undo (`Ctrl+Z`)
 - Light / dark / system theme
 - Chrome toolbar popup for today’s tasks
-- Optional Windows PWA (same database as the extension)
+- **Mail:** multi-account IMAP/SMTP (folders, read, compose/reply/forward, attachments, move/delete)
+- Optional Windows PWA + local server (same database; also runs the mail bridge)
 - Folder file you can put in Google Drive, OneDrive, or Dropbox so two computers merge the same database
 
 Most visited sites are Chrome-only. They are hidden in the PWA.
+
+### Mail (IMAP / SMTP)
+
+Chrome cannot speak IMAP/SMTP by itself. TodoBox uses the local server from **`app install`**:
+
+1. Run **`app install\run.bat`** (or the tray app) so `http://127.0.0.1:8080` is up
+2. Open TodoBox → **Mail** → **Add account**
+3. Enter mailbox email/password plus IMAP and SMTP server settings (often `mail.yourdomain.com`, ports 993 and 465)
+
+Accounts and passwords are stored only on this computer. Reload the unpacked extension after upgrading so `host_permissions` for localhost apply.
 
 ## Privacy
 
@@ -47,7 +58,7 @@ TodoBox does not send your tasks anywhere. Data stays in:
 1. The browser (until you connect a folder)
 2. `todobox.sqlite` in a folder you pick (recommended)
 
-The extension asks only for local Chrome APIs (storage, notifications, alarms, top sites, favicons, offscreen audio). It has no host permissions and no analytics.
+The extension asks for local Chrome APIs (storage, notifications, alarms, top sites, favicons, offscreen audio) plus localhost access for the optional mail bridge (`127.0.0.1:8080`). It has no remote host permissions and no analytics.
 
 Your public author credit (name and website) is the only personal identity in this repository. Do not commit `todobox.sqlite`, `.env`, or `app install/pwa-settings.ini`.
 

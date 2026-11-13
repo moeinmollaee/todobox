@@ -8,6 +8,7 @@ import {
 import {
   storageGet, storageSet, getAssetUrl, getTopSites, hasTopSites, initWebApp,
 } from "./platform/index.js";
+import { initMailUi, bootMail } from "./mail/ui.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -75,9 +76,13 @@ function setPage(page) {
   ui.page = page;
   $("home").classList.toggle("hidden", page !== "home");
   $("workspace").classList.toggle("hidden", page !== "tasks");
-  $("toggle-page").textContent = page === "home" ? "Tasks" : "Home";
+  $("mail")?.classList.toggle("hidden", page !== "mail");
+  $("go-tasks")?.classList.toggle("active-nav", page === "tasks");
+  $("go-mail")?.classList.toggle("active-nav", page === "mail");
+  document.body.classList.toggle("mail-page", page === "mail");
   if (page === "home") ui.selectedId = null;
-  render();
+  if (page === "mail") bootMail();
+  else render();
 }
 
 function openModal(html) {
@@ -803,8 +808,9 @@ async function renderSettings() {
   stopPreview();
   const name = db.getFolderName() || "Not connected";
   const sounds = await loadSoundList();
-  const { notificationSound } = await storageGet("notificationSound");
+  const { notificationSound, mailNotifications } = await storageGet(["notificationSound", "mailNotifications"]);
   const currentSound = notificationSound || "none";
+  const mailNotifyOn = mailNotifications !== false;
   const soundOptions = [
     `<option value="none" ${currentSound === "none" ? "selected" : ""}>None (silent)</option>`,
     ...sounds.map((s) => {
@@ -831,6 +837,11 @@ async function renderSettings() {
           <button class="sound-preview" id="preview-sound" type="button" title="Play / Stop">▶</button>
         </div>
       </div>
+      <label class="check-row">
+        <input id="set-mail-notify" type="checkbox" ${mailNotifyOn ? "checked" : ""} />
+        Email notifications
+      </label>
+      <p class="hint">Desktop toast + sound when new mail arrives. Badge count still updates either way.</p>
     </div>
     <div class="settings-section">
       <h3 class="settings-label">Data</h3>
@@ -859,6 +870,9 @@ async function renderSettings() {
   $("set-sound").onchange = (e) => {
     stopPreview();
     storageSet({ notificationSound: e.target.value });
+  };
+  $("set-mail-notify").onchange = (e) => {
+    storageSet({ mailNotifications: !!e.target.checked });
   };
   $("preview-sound").onclick = () => {
     if (previewAudio) {
@@ -898,7 +912,7 @@ async function renderSettings() {
 function render() {
   if (!db.isReady()) return;
   if (ui.page === "home") renderHome();
-  else renderWorkspace();
+  else if (ui.page === "tasks") renderWorkspace();
   if (!$("settings").classList.contains("hidden")) renderSettings();
 }
 
@@ -956,7 +970,8 @@ function completeFromUi(id) {
 
 function bind() {
   $("go-home").onclick = () => setPage("home");
-  $("toggle-page").onclick = () => setPage(ui.page === "home" ? "tasks" : "home");
+  $("go-tasks").onclick = () => setPage("tasks");
+  $("go-mail").onclick = () => setPage("mail");
   $("home-open-tasks").onclick = () => setPage("tasks");
   $("toggle-theme").onclick = cycleTheme;
   $("open-settings").onclick = () => { $("settings").classList.remove("hidden"); renderSettings(); };
@@ -1317,7 +1332,7 @@ function bind() {
       closeModal();
       $("settings").classList.add("hidden");
       if (ui.selectedId) { ui.selectedId = null; render(); return; }
-      if (ui.page === "tasks") setPage("home");
+      if (ui.page === "tasks" || ui.page === "mail") setPage("home");
       return;
     }
     if (typing) return;
@@ -1365,9 +1380,15 @@ function bind() {
 
 async function boot() {
   await initWebApp();
+  initMailUi({
+    toast,
+    openModal,
+    closeModal,
+  });
   bind();
   const params = new URLSearchParams(location.search);
   if (params.get("view") === "tasks") ui.page = "tasks";
+  if (params.get("view") === "mail") ui.page = "mail";
   topSites = await getTopSites();
   const { theme } = await storageGet("theme");
   applyTheme(theme || "system");

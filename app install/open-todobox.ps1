@@ -50,18 +50,21 @@ function New-AppShortcut {
   return $ourShortcut
 }
 
+# Prefer a fresh localhost window — installed PWA shortcuts can open a stale
+# start URL and show a bare "Not found" page if the path is wrong.
+$browser = Find-BrowserExe
+if ($browser) {
+  Start-Process -FilePath $browser -ArgumentList "--app=$url"
+  if (-not (Test-Path $ourShortcut)) {
+    New-AppShortcut -BrowserPath $browser | Out-Null
+  }
+  exit 0
+}
+
 $shortcut = Find-BrowserPwaShortcut
 if (-not $shortcut -and (Test-Path $ourShortcut)) {
   $shortcut = $ourShortcut
 }
-
-if (-not $shortcut) {
-  $browser = Find-BrowserExe
-  if ($browser) {
-    $shortcut = New-AppShortcut -BrowserPath $browser
-  }
-}
-
 if ($shortcut) {
   Start-Process -FilePath $shortcut
   exit 0

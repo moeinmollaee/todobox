@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "TodoBox",
   "short_name": "TodoBox",
-  "version": "1.0.0",
-  "description": "A calm new-tab homepage with Google search, shortcuts, and a full local task manager. Data lives in a SQLite file you choose.",
+  "version": "1.1.0",
+  "description": "A calm new-tab homepage with Google search, shortcuts, a full local task manager, and IMAP/SMTP mail via a local bridge.",
   "author": "Moein Mollaee",
   "homepage_url": "https://moeinmollaee.com",
   "minimum_chrome_version": "116",
@@ -37,6 +37,10 @@
     "notifications",
     "favicon",
     "offscreen"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:8080/*",
+    "http://localhost:8080/*"
   ],
   "offline_enabled": true,
   "content_security_policy": {

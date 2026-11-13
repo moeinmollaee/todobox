@@ -28,6 +28,11 @@ Data:
 - To sync across computers, put that folder inside Google Drive, OneDrive, or Dropbox, then connect the same folder on each PC and choose Merge. See the project README.
 - "Most visited" is Chrome-only; hidden in the PWA.
 
+Mail:
+- This local server is also the IMAP/SMTP mail bridge for TodoBox Mail.
+- Mail account passwords are stored in %LOCALAPPDATA%\TodoBox\mail-accounts.json (this PC only).
+- Keep the server/tray running while using Mail in the extension.
+
 Extension: load unpacked from the parent folder in chrome://extensions
 
 Author: Moein Mollaee — https://moeinmollaee.com

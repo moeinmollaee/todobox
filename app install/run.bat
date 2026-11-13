@@ -56,10 +56,19 @@ echo.
 goto START
 
 :START
-netstat -ano | findstr ":%PORT%" | findstr "LISTENING" >nul 2>&1
+REM If mail bridge is already healthy, just open the app
+powershell -NoProfile -Command "try { $r=Invoke-WebRequest -Uri 'http://127.0.0.1:%PORT%/api/mail/health' -UseBasicParsing -TimeoutSec 2; if ($r.Content -match '\"ok\"\s*:\s*true') { exit 0 } else { exit 1 } } catch { exit 1 }"
 if %errorlevel%==0 (
   call "%~dp0open-todobox.bat"
   exit /b 0
+)
+
+REM Port busy but not our mail bridge — replace it
+netstat -ano | findstr ":%PORT%" | findstr "LISTENING" >nul 2>&1
+if %errorlevel%==0 (
+  echo Replacing process on port %PORT% with TodoBox Mail bridge...
+  call "%~dp0stop-server.bat"
+  timeout /t 1 /nobreak >nul
 )
 
 if "%MODE%"=="0" goto RUN_MANUAL
